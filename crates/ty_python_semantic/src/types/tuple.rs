@@ -26,7 +26,9 @@ use crate::semantic_index::definition::Definition;
 use crate::subscript::{Nth, OutOfBoundsError, PyIndex, PySlice, StepSizeZeroError};
 use crate::types::builder::RecursivelyDefined;
 use crate::types::class::{ClassType, KnownClass};
-use crate::types::constraints::{ConstraintSet, IteratorConstraintsExtension};
+use crate::types::constraints::{
+    ConstraintSet, ConstraintSetBuilder, IteratorConstraintsExtension,
+};
 use crate::types::generics::InferableTypeVars;
 use crate::types::relation::{
     HasRelationToVisitor, IsDisjointVisitor, IsEquivalentVisitor, TypeRelation,
@@ -274,10 +276,12 @@ impl<'db> TupleType<'db> {
             .find_legacy_typevars_impl(db, binding_context, typevars, visitor);
     }
 
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn has_relation_to_impl(
         self,
         db: &'db dyn Db,
         other: Self,
+        constraints: &ConstraintSetBuilder<'db>,
         inferable: InferableTypeVars<'_, 'db>,
         relation: TypeRelation,
         relation_visitor: &HasRelationToVisitor<'db>,
@@ -286,6 +290,7 @@ impl<'db> TupleType<'db> {
         self.tuple(db).has_relation_to_impl(
             db,
             other.tuple(db),
+            constraints,
             inferable,
             relation,
             relation_visitor,
@@ -297,6 +302,7 @@ impl<'db> TupleType<'db> {
         self,
         db: &'db dyn Db,
         other: Self,
+        constraints: &ConstraintSetBuilder<'db>,
         inferable: InferableTypeVars<'_, 'db>,
         disjointness_visitor: &IsDisjointVisitor<'db>,
         relation_visitor: &HasRelationToVisitor<'db>,
@@ -304,6 +310,7 @@ impl<'db> TupleType<'db> {
         self.tuple(db).is_disjoint_from_impl(
             db,
             other.tuple(db),
+            constraints,
             inferable,
             disjointness_visitor,
             relation_visitor,
@@ -314,11 +321,12 @@ impl<'db> TupleType<'db> {
         self,
         db: &'db dyn Db,
         other: Self,
+        constraints: &ConstraintSetBuilder<'db>,
         inferable: InferableTypeVars<'_, 'db>,
         visitor: &IsEquivalentVisitor<'db>,
     ) -> ConstraintSet<'db> {
         self.tuple(db)
-            .is_equivalent_to_impl(db, other.tuple(db), inferable, visitor)
+            .is_equivalent_to_impl(db, other.tuple(db), constraints, inferable, visitor)
     }
 
     pub(crate) fn is_single_valued(self, db: &'db dyn Db) -> bool {
@@ -505,10 +513,12 @@ impl<'db> FixedLengthTuple<Type<'db>> {
         }
     }
 
+    #[expect(clippy::too_many_arguments)]
     fn has_relation_to_impl(
         &self,
         db: &'db dyn Db,
         other: &Tuple<Type<'db>>,
+        constraints: &ConstraintSetBuilder<'db>,
         inferable: InferableTypeVars<'_, 'db>,
         relation: TypeRelation,
         relation_visitor: &HasRelationToVisitor<'db>,
@@ -517,16 +527,21 @@ impl<'db> FixedLengthTuple<Type<'db>> {
         match other {
             Tuple::Fixed(other) => {
                 ConstraintSet::from(self.0.len() == other.0.len()).and(db, || {
-                    (self.0.iter().zip(&other.0)).when_all(db, |(self_ty, other_ty)| {
-                        self_ty.has_relation_to_impl(
-                            db,
-                            *other_ty,
-                            inferable,
-                            relation,
-                            relation_visitor,
-                            disjointness_visitor,
-                        )
-                    })
+                    (self.0.iter().zip(&other.0)).when_all(
+                        db,
+                        constraints,
+                        |(self_ty, other_ty)| {
+                            self_ty.has_relation_to_impl(
+                                db,
+                                *other_ty,
+                                constraints,
+                                inferable,
+                                relation,
+                                relation_visitor,
+                                disjointness_visitor,
+                            )
+                        },
+                    )
                 })
             }
 
@@ -542,6 +557,7 @@ impl<'db> FixedLengthTuple<Type<'db>> {
                     let element_constraints = self_ty.has_relation_to_impl(
                         db,
                         *other_ty,
+                        constraints,
                         inferable,
                         relation,
                         relation_visitor,
@@ -561,6 +577,7 @@ impl<'db> FixedLengthTuple<Type<'db>> {
                     let element_constraints = self_ty.has_relation_to_impl(
                         db,
                         other_ty,
+                        constraints,
                         inferable,
                         relation,
                         relation_visitor,
@@ -577,10 +594,11 @@ impl<'db> FixedLengthTuple<Type<'db>> {
                 // In addition, any remaining elements in this tuple must satisfy the
                 // variable-length portion of the other tuple.
                 result.and(db, || {
-                    self_iter.when_all(db, |self_ty| {
+                    self_iter.when_all(db, constraints, |self_ty| {
                         self_ty.has_relation_to_impl(
                             db,
                             other.variable(),
+                            constraints,
                             inferable,
                             relation,
                             relation_visitor,
@@ -596,15 +614,14 @@ impl<'db> FixedLengthTuple<Type<'db>> {
         &self,
         db: &'db dyn Db,
         other: &Self,
+        constraints: &ConstraintSetBuilder<'db>,
         inferable: InferableTypeVars<'_, 'db>,
         visitor: &IsEquivalentVisitor<'db>,
     ) -> ConstraintSet<'db> {
         ConstraintSet::from(self.0.len() == other.0.len()).and(db, || {
-            (self.0.iter())
-                .zip(&other.0)
-                .when_all(db, |(self_ty, other_ty)| {
-                    self_ty.is_equivalent_to_impl(db, *other_ty, inferable, visitor)
-                })
+            std::iter::zip(&self.0, &other.0).when_all(db, constraints, |(self_ty, other_ty)| {
+                self_ty.is_equivalent_to_impl(db, *other_ty, constraints, inferable, visitor)
+            })
         })
     }
 
@@ -1014,10 +1031,12 @@ impl<'db> VariableLengthTuple<Type<'db>> {
         }
     }
 
+    #[expect(clippy::too_many_arguments)]
     fn has_relation_to_impl(
         &self,
         db: &'db dyn Db,
         other: &Tuple<Type<'db>>,
+        constraints: &ConstraintSetBuilder<'db>,
         inferable: InferableTypeVars<'_, 'db>,
         relation: TypeRelation,
         relation_visitor: &HasRelationToVisitor<'db>,
@@ -1051,6 +1070,7 @@ impl<'db> VariableLengthTuple<Type<'db>> {
                     let element_constraints = self_ty.has_relation_to_impl(
                         db,
                         other_ty,
+                        constraints,
                         inferable,
                         relation,
                         relation_visitor,
@@ -1071,6 +1091,7 @@ impl<'db> VariableLengthTuple<Type<'db>> {
                     let element_constraints = self_ty.has_relation_to_impl(
                         db,
                         other_ty,
+                        constraints,
                         inferable,
                         relation,
                         relation_visitor,
@@ -1113,6 +1134,7 @@ impl<'db> VariableLengthTuple<Type<'db>> {
                         EitherOrBoth::Both(self_ty, other_ty) => self_ty.has_relation_to_impl(
                             db,
                             other_ty,
+                            constraints,
                             inferable,
                             relation,
                             relation_visitor,
@@ -1121,6 +1143,7 @@ impl<'db> VariableLengthTuple<Type<'db>> {
                         EitherOrBoth::Left(self_ty) => self_ty.has_relation_to_impl(
                             db,
                             other.variable(),
+                            constraints,
                             inferable,
                             relation,
                             relation_visitor,
@@ -1137,6 +1160,7 @@ impl<'db> VariableLengthTuple<Type<'db>> {
                             self.variable().has_relation_to_impl(
                                 db,
                                 other_ty,
+                                constraints,
                                 inferable,
                                 relation,
                                 relation_visitor,
@@ -1167,6 +1191,7 @@ impl<'db> VariableLengthTuple<Type<'db>> {
                         EitherOrBoth::Both(self_ty, other_ty) => self_ty.has_relation_to_impl(
                             db,
                             *other_ty,
+                            constraints,
                             inferable,
                             relation,
                             relation_visitor,
@@ -1175,6 +1200,7 @@ impl<'db> VariableLengthTuple<Type<'db>> {
                         EitherOrBoth::Left(self_ty) => self_ty.has_relation_to_impl(
                             db,
                             other.variable(),
+                            constraints,
                             inferable,
                             relation,
                             relation_visitor,
@@ -1191,6 +1217,7 @@ impl<'db> VariableLengthTuple<Type<'db>> {
                             self.variable().has_relation_to_impl(
                                 db,
                                 *other_ty,
+                                constraints,
                                 inferable,
                                 relation,
                                 relation_visitor,
@@ -1211,6 +1238,7 @@ impl<'db> VariableLengthTuple<Type<'db>> {
                     self.variable().has_relation_to_impl(
                         db,
                         other.variable(),
+                        constraints,
                         inferable,
                         relation,
                         relation_visitor,
@@ -1225,18 +1253,23 @@ impl<'db> VariableLengthTuple<Type<'db>> {
         &self,
         db: &'db dyn Db,
         other: &Self,
+        constraints: &ConstraintSetBuilder<'db>,
         inferable: InferableTypeVars<'_, 'db>,
         visitor: &IsEquivalentVisitor<'db>,
     ) -> ConstraintSet<'db> {
         self.variable()
-            .is_equivalent_to_impl(db, other.variable(), inferable, visitor)
+            .is_equivalent_to_impl(db, other.variable(), constraints, inferable, visitor)
             .and(db, || {
                 self.prenormalized_prefix_elements(db, None)
                     .zip_longest(other.prenormalized_prefix_elements(db, None))
-                    .when_all(db, |pair| match pair {
-                        EitherOrBoth::Both(self_ty, other_ty) => {
-                            self_ty.is_equivalent_to_impl(db, other_ty, inferable, visitor)
-                        }
+                    .when_all(db, constraints, |pair| match pair {
+                        EitherOrBoth::Both(self_ty, other_ty) => self_ty.is_equivalent_to_impl(
+                            db,
+                            other_ty,
+                            constraints,
+                            inferable,
+                            visitor,
+                        ),
                         EitherOrBoth::Left(_) | EitherOrBoth::Right(_) => {
                             ConstraintSet::from(false)
                         }
@@ -1245,10 +1278,14 @@ impl<'db> VariableLengthTuple<Type<'db>> {
             .and(db, || {
                 self.prenormalized_suffix_elements(db, None)
                     .zip_longest(other.prenormalized_suffix_elements(db, None))
-                    .when_all(db, |pair| match pair {
-                        EitherOrBoth::Both(self_ty, other_ty) => {
-                            self_ty.is_equivalent_to_impl(db, other_ty, inferable, visitor)
-                        }
+                    .when_all(db, constraints, |pair| match pair {
+                        EitherOrBoth::Both(self_ty, other_ty) => self_ty.is_equivalent_to_impl(
+                            db,
+                            other_ty,
+                            constraints,
+                            inferable,
+                            visitor,
+                        ),
                         EitherOrBoth::Left(_) | EitherOrBoth::Right(_) => {
                             ConstraintSet::from(false)
                         }
@@ -1478,10 +1515,12 @@ impl<'db> Tuple<Type<'db>> {
         }
     }
 
+    #[expect(clippy::too_many_arguments)]
     fn has_relation_to_impl(
         &self,
         db: &'db dyn Db,
         other: &Self,
+        constraints: &ConstraintSetBuilder<'db>,
         inferable: InferableTypeVars<'_, 'db>,
         relation: TypeRelation,
         relation_visitor: &HasRelationToVisitor<'db>,
@@ -1491,6 +1530,7 @@ impl<'db> Tuple<Type<'db>> {
             Tuple::Fixed(self_tuple) => self_tuple.has_relation_to_impl(
                 db,
                 other,
+                constraints,
                 inferable,
                 relation,
                 relation_visitor,
@@ -1499,6 +1539,7 @@ impl<'db> Tuple<Type<'db>> {
             Tuple::Variable(self_tuple) => self_tuple.has_relation_to_impl(
                 db,
                 other,
+                constraints,
                 inferable,
                 relation,
                 relation_visitor,
@@ -1511,15 +1552,16 @@ impl<'db> Tuple<Type<'db>> {
         &self,
         db: &'db dyn Db,
         other: &Self,
+        constraints: &ConstraintSetBuilder<'db>,
         inferable: InferableTypeVars<'_, 'db>,
         visitor: &IsEquivalentVisitor<'db>,
     ) -> ConstraintSet<'db> {
         match (self, other) {
             (Tuple::Fixed(self_tuple), Tuple::Fixed(other_tuple)) => {
-                self_tuple.is_equivalent_to_impl(db, other_tuple, inferable, visitor)
+                self_tuple.is_equivalent_to_impl(db, other_tuple, constraints, inferable, visitor)
             }
             (Tuple::Variable(self_tuple), Tuple::Variable(other_tuple)) => {
-                self_tuple.is_equivalent_to_impl(db, other_tuple, inferable, visitor)
+                self_tuple.is_equivalent_to_impl(db, other_tuple, constraints, inferable, visitor)
             }
             (Tuple::Fixed(_), Tuple::Variable(_)) | (Tuple::Variable(_), Tuple::Fixed(_)) => {
                 ConstraintSet::from(false)
@@ -1531,6 +1573,7 @@ impl<'db> Tuple<Type<'db>> {
         &self,
         db: &'db dyn Db,
         other: &Self,
+        constraints: &ConstraintSetBuilder<'db>,
         inferable: InferableTypeVars<'_, 'db>,
         disjointness_visitor: &IsDisjointVisitor<'db>,
         relation_visitor: &HasRelationToVisitor<'db>,
@@ -1547,10 +1590,12 @@ impl<'db> Tuple<Type<'db>> {
 
         // If any of the required elements are pairwise disjoint, the tuples are disjoint as well.
         #[allow(clippy::items_after_statements)]
+        #[expect(clippy::too_many_arguments)]
         fn any_disjoint<'s, 'db>(
             db: &'db dyn Db,
             a: &'s [Type<'db>],
             b: &'s [Type<'db>],
+            constraints: &ConstraintSetBuilder<'db>,
             inferable: InferableTypeVars<'_, 'db>,
             disjointness_visitor: &IsDisjointVisitor<'db>,
             relation_visitor: &HasRelationToVisitor<'db>,
@@ -1560,30 +1605,31 @@ impl<'db> Tuple<Type<'db>> {
             'db: 's,
         {
             if rev {
-                a.iter()
-                    .rev()
-                    .zip(b.iter().rev())
-                    .when_any(db, |(self_element, other_element)| {
+                std::iter::zip(a.iter().rev(), b.iter().rev()).when_any(
+                    db,
+                    constraints,
+                    |(self_element, other_element)| {
                         self_element.is_disjoint_from_impl(
                             db,
                             *other_element,
+                            constraints,
                             inferable,
                             disjointness_visitor,
                             relation_visitor,
                         )
-                    })
+                    },
+                )
             } else {
-                a.iter()
-                    .zip(b)
-                    .when_any(db, |(self_element, other_element)| {
-                        self_element.is_disjoint_from_impl(
-                            db,
-                            *other_element,
-                            inferable,
-                            disjointness_visitor,
-                            relation_visitor,
-                        )
-                    })
+                std::iter::zip(a, b).when_any(db, constraints, |(self_element, other_element)| {
+                    self_element.is_disjoint_from_impl(
+                        db,
+                        *other_element,
+                        constraints,
+                        inferable,
+                        disjointness_visitor,
+                        relation_visitor,
+                    )
+                })
             }
         }
 
@@ -1592,6 +1638,7 @@ impl<'db> Tuple<Type<'db>> {
                 db,
                 self_tuple.all_elements(),
                 other_tuple.all_elements(),
+                constraints,
                 inferable,
                 disjointness_visitor,
                 relation_visitor,
@@ -1605,6 +1652,7 @@ impl<'db> Tuple<Type<'db>> {
                 db,
                 self_tuple.prefix_elements(),
                 other_tuple.prefix_elements(),
+                constraints,
                 inferable,
                 disjointness_visitor,
                 relation_visitor,
@@ -1615,6 +1663,7 @@ impl<'db> Tuple<Type<'db>> {
                     db,
                     self_tuple.suffix_elements(),
                     other_tuple.suffix_elements(),
+                    constraints,
                     inferable,
                     disjointness_visitor,
                     relation_visitor,
@@ -1627,6 +1676,7 @@ impl<'db> Tuple<Type<'db>> {
                 db,
                 fixed.all_elements(),
                 variable.prefix_elements(),
+                constraints,
                 inferable,
                 disjointness_visitor,
                 relation_visitor,
@@ -1637,6 +1687,7 @@ impl<'db> Tuple<Type<'db>> {
                     db,
                     fixed.all_elements(),
                     variable.suffix_elements(),
+                    constraints,
                     inferable,
                     disjointness_visitor,
                     relation_visitor,
