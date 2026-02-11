@@ -53,7 +53,7 @@ use crate::types::call::{Binding, Bindings, CallArguments, CallableBinding};
 use crate::types::class::NamedTupleSpec;
 pub(crate) use crate::types::class_base::ClassBase;
 use crate::types::constraints::{
-    ConstraintSet, ConstraintSetBuilder, IteratorConstraintsExtension,
+    ConstraintSet, ConstraintSetBuilder, IteratorConstraintsExtension, OwnedConstraintSet,
 };
 use crate::types::context::{LintDiagnosticGuard, LintDiagnosticGuardBuilder};
 use crate::types::diagnostic::{INVALID_AWAIT, INVALID_TYPE_FORM, UNSUPPORTED_BOOL_CONVERSION};
@@ -547,13 +547,13 @@ impl<'db> PropertyInstanceType<'db> {
         }
     }
 
-    fn when_equivalent_to(
+    fn when_equivalent_to<'c>(
         self,
         db: &'db dyn Db,
         other: Self,
-        constraints: &ConstraintSetBuilder<'db>,
+        constraints: &'c ConstraintSetBuilder<'db>,
         inferable: InferableTypeVars<'_, 'db>,
-    ) -> ConstraintSet<'db> {
+    ) -> ConstraintSet<'db, 'c> {
         self.is_equivalent_to_impl(
             db,
             other,
@@ -563,14 +563,14 @@ impl<'db> PropertyInstanceType<'db> {
         )
     }
 
-    fn is_equivalent_to_impl(
+    fn is_equivalent_to_impl<'c>(
         self,
         db: &'db dyn Db,
         other: Self,
-        constraints: &ConstraintSetBuilder<'db>,
+        constraints: &'c ConstraintSetBuilder<'db>,
         inferable: InferableTypeVars<'_, 'db>,
-        visitor: &IsEquivalentVisitor<'db>,
-    ) -> ConstraintSet<'db> {
+        visitor: &IsEquivalentVisitor<'db, 'c>,
+    ) -> ConstraintSet<'db, 'c> {
         let getter_equivalence = if let Some(getter) = self.getter(db) {
             let Some(other_getter) = other.getter(db) else {
                 return ConstraintSet::from_bool(constraints, false);
@@ -3879,8 +3879,9 @@ impl<'db> Type<'db> {
             }
 
             Type::KnownInstance(KnownInstanceType::ConstraintSet(tracked_set)) => {
-                let constraints = tracked_set.constraints(db);
-                Truthiness::from(constraints.is_always_satisfied(db))
+                let constraints = ConstraintSetBuilder::new();
+                let tracked_set = constraints.load(tracked_set.constraints(db));
+                Truthiness::from(tracked_set.is_always_satisfied(db))
             }
 
             Type::FunctionLiteral(_)
@@ -7430,7 +7431,8 @@ impl<'db> TypeMapping<'_, 'db> {
 #[salsa::interned(debug, heap_size=ruff_memory_usage::heap_size)]
 #[derive(PartialOrd, Ord)]
 pub struct InternedConstraintSet<'db> {
-    constraints: ConstraintSet<'db>,
+    #[returns(ref)]
+    constraints: OwnedConstraintSet<'db>,
 }
 
 // The Salsa heap is tracked separately.
@@ -10704,16 +10706,16 @@ impl<'db> BoundMethodType<'db> {
     }
 
     #[expect(clippy::too_many_arguments)]
-    fn has_relation_to_impl(
+    fn has_relation_to_impl<'c>(
         self,
         db: &'db dyn Db,
         other: Self,
-        constraints: &ConstraintSetBuilder<'db>,
+        constraints: &'c ConstraintSetBuilder<'db>,
         inferable: InferableTypeVars<'_, 'db>,
         relation: TypeRelation,
-        relation_visitor: &HasRelationToVisitor<'db>,
-        disjointness_visitor: &IsDisjointVisitor<'db>,
-    ) -> ConstraintSet<'db> {
+        relation_visitor: &HasRelationToVisitor<'db, 'c>,
+        disjointness_visitor: &IsDisjointVisitor<'db, 'c>,
+    ) -> ConstraintSet<'db, 'c> {
         // A bound method is a typically a subtype of itself. However, we must explicitly verify
         // the subtyping of the underlying function signatures (since they might be specialized
         // differently), and of the bound self parameter (taking care that parameters, including a
@@ -10741,14 +10743,14 @@ impl<'db> BoundMethodType<'db> {
             })
     }
 
-    fn is_equivalent_to_impl(
+    fn is_equivalent_to_impl<'c>(
         self,
         db: &'db dyn Db,
         other: Self,
-        constraints: &ConstraintSetBuilder<'db>,
+        constraints: &'c ConstraintSetBuilder<'db>,
         inferable: InferableTypeVars<'_, 'db>,
-        visitor: &IsEquivalentVisitor<'db>,
-    ) -> ConstraintSet<'db> {
+        visitor: &IsEquivalentVisitor<'db, 'c>,
+    ) -> ConstraintSet<'db, 'c> {
         self.function(db)
             .is_equivalent_to_impl(db, other.function(db), constraints, inferable, visitor)
             .and(db, constraints, || {
@@ -10972,16 +10974,16 @@ impl<'db> CallableType<'db> {
     ///
     /// See [`Type::is_subtype_of`] and [`Type::is_assignable_to`] for more details.
     #[expect(clippy::too_many_arguments)]
-    fn has_relation_to_impl(
+    fn has_relation_to_impl<'c>(
         self,
         db: &'db dyn Db,
         other: Self,
-        constraints: &ConstraintSetBuilder<'db>,
+        constraints: &'c ConstraintSetBuilder<'db>,
         inferable: InferableTypeVars<'_, 'db>,
         relation: TypeRelation,
-        relation_visitor: &HasRelationToVisitor<'db>,
-        disjointness_visitor: &IsDisjointVisitor<'db>,
-    ) -> ConstraintSet<'db> {
+        relation_visitor: &HasRelationToVisitor<'db, 'c>,
+        disjointness_visitor: &IsDisjointVisitor<'db, 'c>,
+    ) -> ConstraintSet<'db, 'c> {
         if other.is_function_like(db) && !self.is_function_like(db) {
             return ConstraintSet::from_bool(constraints, false);
         }
@@ -11000,14 +11002,14 @@ impl<'db> CallableType<'db> {
     /// Check whether this callable type is equivalent to another callable type.
     ///
     /// See [`Type::is_equivalent_to`] for more details.
-    fn is_equivalent_to_impl(
+    fn is_equivalent_to_impl<'c>(
         self,
         db: &'db dyn Db,
         other: Self,
-        constraints: &ConstraintSetBuilder<'db>,
+        constraints: &'c ConstraintSetBuilder<'db>,
         inferable: InferableTypeVars<'_, 'db>,
-        visitor: &IsEquivalentVisitor<'db>,
-    ) -> ConstraintSet<'db> {
+        visitor: &IsEquivalentVisitor<'db, 'c>,
+    ) -> ConstraintSet<'db, 'c> {
         if self == other {
             return ConstraintSet::from_bool(constraints, true);
         }
@@ -11077,16 +11079,16 @@ impl<'db> CallableTypes<'db> {
     }
 
     #[expect(clippy::too_many_arguments)]
-    pub(crate) fn has_relation_to_impl(
+    pub(crate) fn has_relation_to_impl<'c>(
         self,
         db: &'db dyn Db,
         other: CallableType<'db>,
-        constraints: &ConstraintSetBuilder<'db>,
+        constraints: &'c ConstraintSetBuilder<'db>,
         inferable: InferableTypeVars<'_, 'db>,
         relation: TypeRelation,
-        relation_visitor: &HasRelationToVisitor<'db>,
-        disjointness_visitor: &IsDisjointVisitor<'db>,
-    ) -> ConstraintSet<'db> {
+        relation_visitor: &HasRelationToVisitor<'db, 'c>,
+        disjointness_visitor: &IsDisjointVisitor<'db, 'c>,
+    ) -> ConstraintSet<'db, 'c> {
         self.0.iter().when_all(db, constraints, |element| {
             element.has_relation_to_impl(
                 db,
@@ -11172,16 +11174,16 @@ pub(super) fn walk_method_wrapper_type<'db, V: visitor::TypeVisitor<'db> + ?Size
 
 impl<'db> KnownBoundMethodType<'db> {
     #[expect(clippy::too_many_arguments)]
-    fn has_relation_to_impl(
+    fn has_relation_to_impl<'c>(
         self,
         db: &'db dyn Db,
         other: Self,
-        constraints: &ConstraintSetBuilder<'db>,
+        constraints: &'c ConstraintSetBuilder<'db>,
         inferable: InferableTypeVars<'_, 'db>,
         relation: TypeRelation,
-        relation_visitor: &HasRelationToVisitor<'db>,
-        disjointness_visitor: &IsDisjointVisitor<'db>,
-    ) -> ConstraintSet<'db> {
+        relation_visitor: &HasRelationToVisitor<'db, 'c>,
+        disjointness_visitor: &IsDisjointVisitor<'db, 'c>,
+    ) -> ConstraintSet<'db, 'c> {
         match (self, other) {
             (
                 KnownBoundMethodType::FunctionTypeDunderGet(self_function),
@@ -11280,14 +11282,14 @@ impl<'db> KnownBoundMethodType<'db> {
         }
     }
 
-    fn is_equivalent_to_impl(
+    fn is_equivalent_to_impl<'c>(
         self,
         db: &'db dyn Db,
         other: Self,
-        constraints: &ConstraintSetBuilder<'db>,
+        constraints: &'c ConstraintSetBuilder<'db>,
         inferable: InferableTypeVars<'_, 'db>,
-        visitor: &IsEquivalentVisitor<'db>,
-    ) -> ConstraintSet<'db> {
+        visitor: &IsEquivalentVisitor<'db, 'c>,
+    ) -> ConstraintSet<'db, 'c> {
         match (self, other) {
             (
                 KnownBoundMethodType::FunctionTypeDunderGet(self_function),
@@ -11354,11 +11356,11 @@ impl<'db> KnownBoundMethodType<'db> {
             | (
                 KnownBoundMethodType::ConstraintSetSatisfiedByAllTypeVars(left_constraints),
                 KnownBoundMethodType::ConstraintSetSatisfiedByAllTypeVars(right_constraints),
-            ) => left_constraints.constraints(db).iff(
-                db,
-                constraints,
-                right_constraints.constraints(db),
-            ),
+            ) => {
+                let left = constraints.load(left_constraints.constraints(db));
+                let right = constraints.load(right_constraints.constraints(db));
+                left.iff(db, constraints, right)
+            }
 
             (
                 KnownBoundMethodType::GenericContextSpecializeConstrained(left_generic_context),
@@ -12604,14 +12606,14 @@ impl<'db> UnionType<'db> {
         Some(builder.build())
     }
 
-    pub(crate) fn is_equivalent_to_impl(
+    pub(crate) fn is_equivalent_to_impl<'c>(
         self,
         db: &'db dyn Db,
         other: Self,
-        constraints: &ConstraintSetBuilder<'db>,
+        constraints: &'c ConstraintSetBuilder<'db>,
         _inferable: InferableTypeVars<'_, 'db>,
-        _visitor: &IsEquivalentVisitor<'db>,
-    ) -> ConstraintSet<'db> {
+        _visitor: &IsEquivalentVisitor<'db, 'c>,
+    ) -> ConstraintSet<'db, 'c> {
         if self == other {
             return ConstraintSet::from_bool(constraints, true);
         }
@@ -13028,14 +13030,14 @@ impl<'db> IntersectionType<'db> {
     }
 
     /// Return `true` if `self` represents exactly the same set of possible runtime objects as `other`
-    pub(crate) fn is_equivalent_to_impl(
+    pub(crate) fn is_equivalent_to_impl<'c>(
         self,
         db: &'db dyn Db,
         other: Self,
-        constraints: &ConstraintSetBuilder<'db>,
+        constraints: &'c ConstraintSetBuilder<'db>,
         _inferable: InferableTypeVars<'_, 'db>,
-        _visitor: &IsEquivalentVisitor<'db>,
-    ) -> ConstraintSet<'db> {
+        _visitor: &IsEquivalentVisitor<'db, 'c>,
+    ) -> ConstraintSet<'db, 'c> {
         if self == other {
             return ConstraintSet::from_bool(constraints, true);
         }

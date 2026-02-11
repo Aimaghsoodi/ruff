@@ -1153,12 +1153,14 @@ impl<'db> Bindings<'db> {
                         Some(KnownFunction::IsEquivalentTo) => {
                             if let [Some(ty_a), Some(ty_b)] = overload.parameter_types() {
                                 let constraints = ConstraintSetBuilder::new();
-                                let result = ty_a.when_equivalent_to(
-                                    db,
-                                    *ty_b,
-                                    &constraints,
-                                    InferableTypeVars::None,
-                                );
+                                let result = constraints.into_owned(|constraints| {
+                                    ty_a.when_equivalent_to(
+                                        db,
+                                        *ty_b,
+                                        constraints,
+                                        InferableTypeVars::None,
+                                    )
+                                });
                                 let tracked = InternedConstraintSet::new(db, result);
                                 overload.set_return_type(Type::KnownInstance(
                                     KnownInstanceType::ConstraintSet(tracked),
@@ -1169,12 +1171,14 @@ impl<'db> Bindings<'db> {
                         Some(KnownFunction::IsSubtypeOf) => {
                             if let [Some(ty_a), Some(ty_b)] = overload.parameter_types() {
                                 let constraints = ConstraintSetBuilder::new();
-                                let result = ty_a.when_subtype_of(
-                                    db,
-                                    *ty_b,
-                                    &constraints,
-                                    InferableTypeVars::None,
-                                );
+                                let result = constraints.into_owned(|constraints| {
+                                    ty_a.when_subtype_of(
+                                        db,
+                                        *ty_b,
+                                        constraints,
+                                        InferableTypeVars::None,
+                                    )
+                                });
                                 let tracked = InternedConstraintSet::new(db, result);
                                 overload.set_return_type(Type::KnownInstance(
                                     KnownInstanceType::ConstraintSet(tracked),
@@ -1185,12 +1189,14 @@ impl<'db> Bindings<'db> {
                         Some(KnownFunction::IsAssignableTo) => {
                             if let [Some(ty_a), Some(ty_b)] = overload.parameter_types() {
                                 let constraints = ConstraintSetBuilder::new();
-                                let result = ty_a.when_assignable_to(
-                                    db,
-                                    *ty_b,
-                                    &constraints,
-                                    InferableTypeVars::None,
-                                );
+                                let result = constraints.into_owned(|constraints| {
+                                    ty_a.when_assignable_to(
+                                        db,
+                                        *ty_b,
+                                        constraints,
+                                        InferableTypeVars::None,
+                                    )
+                                });
                                 let tracked = InternedConstraintSet::new(db, result);
                                 overload.set_return_type(Type::KnownInstance(
                                     KnownInstanceType::ConstraintSet(tracked),
@@ -1201,12 +1207,14 @@ impl<'db> Bindings<'db> {
                         Some(KnownFunction::IsDisjointFrom) => {
                             if let [Some(ty_a), Some(ty_b)] = overload.parameter_types() {
                                 let constraints = ConstraintSetBuilder::new();
-                                let result = ty_a.when_disjoint_from(
-                                    db,
-                                    *ty_b,
-                                    &constraints,
-                                    InferableTypeVars::None,
-                                );
+                                let result = constraints.into_owned(|constraints| {
+                                    ty_a.when_disjoint_from(
+                                        db,
+                                        *ty_b,
+                                        constraints,
+                                        InferableTypeVars::None,
+                                    )
+                                });
                                 let tracked = InternedConstraintSet::new(db, result);
                                 overload.set_return_type(Type::KnownInstance(
                                     KnownInstanceType::ConstraintSet(tracked),
@@ -1751,13 +1759,15 @@ impl<'db> Bindings<'db> {
                             return;
                         };
                         let constraints = ConstraintSetBuilder::new();
-                        let result = ConstraintSet::constrain_typevar(
-                            db,
-                            &constraints,
-                            *typevar,
-                            *lower,
-                            *upper,
-                        );
+                        let result = constraints.into_owned(|constraints| {
+                            ConstraintSet::constrain_typevar(
+                                db,
+                                constraints,
+                                *typevar,
+                                *lower,
+                                *upper,
+                            )
+                        });
                         let tracked = InternedConstraintSet::new(db, result);
                         overload.set_return_type(Type::KnownInstance(
                             KnownInstanceType::ConstraintSet(tracked),
@@ -1769,7 +1779,8 @@ impl<'db> Bindings<'db> {
                             return;
                         }
                         let constraints = ConstraintSetBuilder::new();
-                        let result = ConstraintSet::from_bool(&constraints, true);
+                        let result = constraints
+                            .into_owned(|constraints| ConstraintSet::from_bool(constraints, true));
                         let tracked = InternedConstraintSet::new(db, result);
                         overload.set_return_type(Type::KnownInstance(
                             KnownInstanceType::ConstraintSet(tracked),
@@ -1781,7 +1792,8 @@ impl<'db> Bindings<'db> {
                             return;
                         }
                         let constraints = ConstraintSetBuilder::new();
-                        let result = ConstraintSet::from_bool(&constraints, false);
+                        let result = constraints
+                            .into_owned(|constraints| ConstraintSet::from_bool(constraints, false));
                         let tracked = InternedConstraintSet::new(db, result);
                         overload.set_return_type(Type::KnownInstance(
                             KnownInstanceType::ConstraintSet(tracked),
@@ -1796,13 +1808,15 @@ impl<'db> Bindings<'db> {
                         };
 
                         let constraints = ConstraintSetBuilder::new();
-                        let result = ty_a.when_subtype_of_assuming(
-                            db,
-                            *ty_b,
-                            tracked.constraints(db),
-                            &constraints,
-                            InferableTypeVars::None,
-                        );
+                        let result = constraints.into_owned(|constraints| {
+                            ty_a.when_subtype_of_assuming(
+                                db,
+                                *ty_b,
+                                constraints.load(tracked.constraints(db)),
+                                constraints,
+                                InferableTypeVars::None,
+                            )
+                        });
                         let tracked = InternedConstraintSet::new(db, result);
                         overload.set_return_type(Type::KnownInstance(
                             KnownInstanceType::ConstraintSet(tracked),
@@ -1821,9 +1835,11 @@ impl<'db> Bindings<'db> {
                         };
 
                         let constraints = ConstraintSetBuilder::new();
-                        let result = tracked
-                            .constraints(db)
-                            .implies(db, &constraints, || other.constraints(db));
+                        let result = constraints.into_owned(|constraints| {
+                            let lhs = constraints.load(tracked.constraints(db));
+                            let rhs = constraints.load(other.constraints(db));
+                            lhs.implies(db, constraints, || rhs)
+                        });
                         let tracked = InternedConstraintSet::new(db, result);
                         overload.set_return_type(Type::KnownInstance(
                             KnownInstanceType::ConstraintSet(tracked),
@@ -1860,9 +1876,10 @@ impl<'db> Bindings<'db> {
                             _ => continue,
                         };
 
-                        let result = tracked
-                            .constraints(db)
-                            .satisfied_by_all_typevars(db, InferableTypeVars::One(&inferable));
+                        let constraints = ConstraintSetBuilder::new();
+                        let set = constraints.load(tracked.constraints(db));
+                        let result =
+                            set.satisfied_by_all_typevars(db, InferableTypeVars::One(&inferable));
                         overload.set_return_type(Type::bool_literal(result));
                     }
 
@@ -1876,11 +1893,9 @@ impl<'db> Bindings<'db> {
                             continue;
                         };
                         let constraints = ConstraintSetBuilder::new();
-                        let specialization = generic_context.specialize_constrained(
-                            db,
-                            &constraints,
-                            set.constraints(db),
-                        );
+                        let set = constraints.load(set.constraints(db));
+                        let specialization =
+                            generic_context.specialize_constrained(db, &constraints, set);
                         let result = match specialization {
                             Ok(specialization) => Type::KnownInstance(
                                 KnownInstanceType::Specialization(specialization),
