@@ -1878,8 +1878,11 @@ impl<'db> Bindings<'db> {
 
                         let constraints = ConstraintSetBuilder::new();
                         let set = constraints.load(tracked.constraints(db));
-                        let result =
-                            set.satisfied_by_all_typevars(db, InferableTypeVars::One(&inferable));
+                        let result = set.satisfied_by_all_typevars(
+                            db,
+                            &constraints,
+                            InferableTypeVars::One(&inferable),
+                        );
                         overload.set_return_type(Type::bool_literal(result));
                     }
 
