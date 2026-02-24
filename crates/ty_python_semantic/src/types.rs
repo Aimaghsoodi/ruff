@@ -3880,7 +3880,7 @@ impl<'db> Type<'db> {
 
             Type::KnownInstance(KnownInstanceType::ConstraintSet(tracked_set)) => {
                 let constraints = ConstraintSetBuilder::new();
-                let tracked_set = constraints.load(tracked_set.constraints(db));
+                let tracked_set = constraints.load(db, tracked_set.constraints(db));
                 Truthiness::from(tracked_set.is_always_satisfied(db))
             }
 
@@ -11357,8 +11357,8 @@ impl<'db> KnownBoundMethodType<'db> {
                 KnownBoundMethodType::ConstraintSetSatisfiedByAllTypeVars(left_constraints),
                 KnownBoundMethodType::ConstraintSetSatisfiedByAllTypeVars(right_constraints),
             ) => {
-                let left = constraints.load(left_constraints.constraints(db));
-                let right = constraints.load(right_constraints.constraints(db));
+                let left = constraints.load(db, left_constraints.constraints(db));
+                let right = constraints.load(db, right_constraints.constraints(db));
                 left.iff(db, constraints, right)
             }
 
