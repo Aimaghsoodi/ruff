@@ -44,7 +44,7 @@ use crate::types::signatures::{Parameter, ParameterForm, ParameterKind, Paramete
 use crate::types::tuple::{TupleLength, TupleSpec, TupleType};
 use crate::types::{
     BoundMethodType, BoundTypeVarIdentity, BoundTypeVarInstance, CallableSignature, CallableType,
-    CallableTypeKind, ClassLiteral, DATACLASS_FLAGS, DataclassFlags, DataclassParams, DynamicType,
+    CallableTypeKind, ClassLiteral, DATACLASS_FLAGS, DataclassFlags, DataclassParams,
     FieldInstance, GenericAlias, InternedConstraintSet, IntersectionType, KnownBoundMethodType,
     KnownClass, KnownInstanceType, LiteralValueTypeKind, MemberLookupPolicy, NominalInstanceType,
     PropertyInstanceType, SpecialFormType, TypeAliasType, TypeContext, TypeVarBoundOrConstraints,
@@ -2773,7 +2773,7 @@ impl<'db> CallableBinding<'db> {
             return match overload_call_return_type {
                 OverloadCallReturnType::ArgumentTypeExpansion(return_type) => return_type,
                 OverloadCallReturnType::ArgumentTypeExpansionLimitReached(_)
-                | OverloadCallReturnType::Ambiguous => Type::Dynamic(DynamicType::Any),
+                | OverloadCallReturnType::Ambiguous => Type::unknown(),
             };
         }
         if let Some((_, first_overload)) = self.matching_overloads().next() {
